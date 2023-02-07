@@ -7,6 +7,7 @@ import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
@@ -17,8 +18,17 @@ import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.AssetManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.Rect;
+import android.graphics.RectF;
+import android.graphics.drawable.BitmapDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -33,13 +43,11 @@ import android.widget.Toast;
 
 import com.googlecode.tesseract.android.TessBaseAPI;
 
-import net.sourceforge.tess4j.ITessAPI;
-import net.sourceforge.tess4j.ITesseract;
-import net.sourceforge.tess4j.Tesseract;
-import net.sourceforge.tess4j.TesseractException;
-
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -55,6 +63,8 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         getSupportActionBar().setDisplayShowTitleEnabled(false);
         setContentView(R.layout.activity_main);
+
+        extractAssets();
 
         this.image = findViewById(R.id.image);
         this.text = findViewById(R.id.camera_text);
@@ -109,20 +119,24 @@ public class MainActivity extends AppCompatActivity {
     private String crackImage(Uri uri) {
         Bitmap bitmap = null;
         try {
-            bitmap = MediaStore.Images.Media.getBitmap(getApplicationContext().getContentResolver(), uri);
+            bitmap = MediaStore.Images.Media.getBitmap(getApplicationContext().getContentResolver(), uri);;
         } catch (IOException e) {
             e.printStackTrace();
         }
 
-//        String path = Environment.getExternalStorageState() + "/";
-//
-//        TessBaseAPI tessAPI = new TessBaseAPI();
-//        tessAPI.init(path, "pl");
-//        tessAPI.setImage(bitmap);
+//        bitmap = toGrayscale(bitmap);
+
+        TessBaseAPI tessAPI = new TessBaseAPI();
+        tessAPI.init(getFilesDir().getAbsolutePath(), "pol");
+        tessAPI.setImage(bitmap);
+        tessAPI.setVariable(TessBaseAPI.VAR_CHAR_WHITELIST, "qwertyuiopPOIUYTREWQasdASDfghFGHjklJKLlLxcvXCVbnmBNM");
+        tessAPI.setVariable(TessBaseAPI.VAR_CHAR_BLACKLIST, "1234567890!@#$%^&*()_+=-[]}{" +
+                ";:'\"\\|~`,./<>?");
+        tessAPI.setVariable("user_defined_dpi", "300");
 
         String result = null;
-//        result = tessAPI.getUTF8Text();
-//        tessAPI.end();
+        result = tessAPI.getUTF8Text();
+        tessAPI.end();
         return  result;
     }
 
@@ -162,5 +176,87 @@ public class MainActivity extends AppCompatActivity {
         } else {
             ActivityCompat.requestPermissions(MainActivity.this, permissions, 30);
         }
+    }
+
+    public void extractAssets() {
+        AssetManager am = getAssets();
+
+        File tessDir = new File(getFilesDir().getAbsolutePath(), "tessdata");
+        if (!tessDir.exists()) {
+            tessDir.mkdir();
+        }
+        File polFile = new File(tessDir, "pol.traineddata");
+        if (!polFile.exists()) {
+            copyFile(am, "pol.traineddata", polFile);
+        }
+    }
+
+    private void copyFile(@NonNull AssetManager am, @NonNull String assetName,
+                                 @NonNull File outFile) {
+        try (
+                InputStream in = am.open(assetName);
+                OutputStream out = new FileOutputStream(outFile)
+        ) {
+            byte[] buffer = new byte[1024];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static Bitmap toGrayscale(Bitmap bmpOriginal) {
+        int width, height;
+        height = bmpOriginal.getHeight();
+        width = bmpOriginal.getWidth();/*www.ja v  a  2s  . c  om*/
+        Bitmap bmpGrayscale = Bitmap.createBitmap(width, height,
+                Bitmap.Config.RGB_565);
+        Canvas c = new Canvas(bmpGrayscale);
+        Paint paint = new Paint();
+        ColorMatrix cm = new ColorMatrix();
+        cm.setSaturation(0);
+        ColorMatrixColorFilter f = new ColorMatrixColorFilter(cm);
+        paint.setColorFilter(f);
+        c.drawBitmap(bmpOriginal, 0, 0, paint);
+        return bmpGrayscale;
+    }
+
+    public static Bitmap toGrayscale(Bitmap bmpOriginal, int pixels) {
+        return toRoundCorner(toGrayscale(bmpOriginal), pixels);
+    }
+
+    public static Bitmap toRoundCorner(Bitmap bitmap, int pixels) {
+        Bitmap output = Bitmap.createBitmap(bitmap.getWidth(),
+                bitmap.getHeight(), Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(output);
+        final int color = 0xff424242;
+        final Paint paint = new Paint();
+        final Rect rect = new Rect(0, 0, bitmap.getWidth(),
+                bitmap.getHeight());
+        final RectF rectF = new RectF(rect);
+        final float roundPx = pixels;
+        paint.setAntiAlias(true);
+        canvas.drawARGB(0, 0, 0, 0);
+        paint.setColor(color);
+        canvas.drawRoundRect(rectF, roundPx, roundPx, paint);
+        paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN));
+        canvas.drawBitmap(bitmap, rect, rect, paint);
+        return output;
+    }
+
+    @SuppressWarnings("deprecation")
+    public static BitmapDrawable toRoundCorner(
+            BitmapDrawable bitmapDrawable, int pixels) {
+        Bitmap bitmap = bitmapDrawable.getBitmap();
+        bitmapDrawable = new BitmapDrawable(toRoundCorner(bitmap, pixels));
+        return bitmapDrawable;
+    }
+
+    public static Bitmap getBitmap(Bitmap source, int x, int y, int width,
+                                   int height) {
+        Bitmap bitmap = Bitmap.createBitmap(source, x, y, width, height);
+        return bitmap;
     }
 }
